@@ -1,102 +1,134 @@
-use std::fmt::Display;
+pub trait Expr<T> {
+    fn analyze(&self, analyzer: &mut impl Analyzer<T>);
 
-pub trait Process<T>: Sized {
-    fn acquires(&self) -> impl Iterator<Item = T>;
-
-    fn releases(&self) -> impl Iterator<Item = T>;
-
-    fn add<P>(self, other: P) -> Add<Self, P>
+    fn add<E>(self, other: E) -> Add<Self, E>
     where
-        P: Process<T>,
+        Self: Sized,
+        E: Expr<T>,
     {
         Add(self, other)
     }
 
-    fn then<F>(self, then: F, desc: &str) -> Then<Self, F>
+    fn apply(self, functor: T) -> Apply<T, Self>
     where
-        F: Fn(T) -> T,
+        Self: Sized,
     {
-        Then(self, then, desc.to_string())
-    }
-
-    fn finaly(self, final_thing: T) -> Finaly<Self, T> {
-        Finaly(self, final_thing)
+        Apply(functor, self)
     }
 }
 
-pub struct Add<T, Q>(T, Q);
+pub trait Analyzer<TValue> {
+    fn value(&mut self, x: &TValue);
 
-impl<T, P1, P2> Process<T> for Add<P1, P2>
-where
-    P1: Process<T>,
-    P2: Process<T>,
-{
-    fn acquires(&self) -> impl Iterator<Item = T> {
-        self.0.acquires().chain(self.1.acquires())
-    }
+    fn add<TLeft, TRight>(&mut self, left: &TLeft, right: &TRight)
+    where
+        TLeft: Expr<TValue>,
+        TRight: Expr<TValue>;
 
-    fn releases(&self) -> impl Iterator<Item = T> {
-        self.0.releases().chain(self.1.releases())
+    fn apply<TExpr>(&mut self, functor: &TValue, right: &TExpr)
+    where
+        TExpr: Expr<TValue>;
+}
+
+pub struct Value<T>(T);
+
+impl<T> Expr<T> for Value<T> {
+    fn analyze(&self, visitor: &mut impl Analyzer<T>) {
+        visitor.value(&self.0)
     }
 }
 
-impl<P1, P2> Display for Add<P1, P2>
+pub struct Add<E1, E2>(E1, E2);
+
+impl<T, E1, E2> Expr<T> for Add<E1, E2>
 where
-    P1: Display,
-    P2: Display,
+    E1: Expr<T>,
+    E2: Expr<T>,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} and {}", self.0, self.1)
+    fn analyze(&self, visitor: &mut impl Analyzer<T>) {
+        visitor.add(&self.0, &self.1)
     }
 }
 
-pub struct Then<P, F>(P, F, String);
+pub struct Apply<TValue, TExpr>(TValue, TExpr);
 
-impl<T, P1, F> Process<T> for Then<P1, F>
+impl<TValue, TExpr> Expr<TValue> for Apply<TValue, TExpr>
 where
-    P1: Process<T>,
-    F: Fn(T) -> T,
+    TExpr: Expr<TValue>,
 {
-    fn acquires(&self) -> impl Iterator<Item = T> {
-        self.0.acquires()
-    }
-
-    fn releases(&self) -> impl Iterator<Item = T> {
-        self.0.releases().map(|x| self.1(x))
+    fn analyze(&self, analyzer: &mut impl Analyzer<TValue>) {
+        analyzer.apply(&self.0, &self.1)
     }
 }
 
-impl<P1, F> Display for Then<P1, F>
-where
-    P1: Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}. then {}", self.0, self.2)
-    }
-}
+#[cfg(test)]
+mod tests {
+    use std::ops::Add;
 
-pub struct Finaly<P, T>(P, T);
+    use super::{Analyzer, Expr, Value};
 
-impl<P, T> Finaly<P, T>
-where
-    P: Process<T>,
-    T: Clone,
-{
-    pub fn acquires(&self) -> Vec<T> {
-        self.0.acquires().collect()
+    enum NumericCategory<T> {
+        Value(T),
+        Func(Box<dyn Fn(T) -> T>),
     }
 
-    pub fn releases(&self) -> T {
-        self.1.clone()
-    }
-}
+    struct CalcVisitor<T>(T);
 
-impl<P, T> Display for Finaly<P, T>
-where
-    P: Display,
-    T: Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}. finaly {}.", self.0, self.1)
+    impl<T> Analyzer<NumericCategory<T>> for CalcVisitor<T>
+    where
+        T: Default + Copy + Add<Output = T>,
+    {
+        fn value(&mut self, x: &NumericCategory<T>) {
+            match x {
+                NumericCategory::Value(v) => self.0 = *v,
+                _ => {}
+            }
+        }
+
+        fn add<TLeft, TRight>(&mut self, left: &TLeft, right: &TRight)
+        where
+            TLeft: Expr<NumericCategory<T>>,
+            TRight: Expr<NumericCategory<T>>,
+        {
+            let mut left_vis = CalcVisitor(T::default());
+            left.analyze(&mut left_vis);
+            let mut right_vis = CalcVisitor(T::default());
+            right.analyze(&mut right_vis);
+            self.0 = left_vis.0 + right_vis.0;
+        }
+
+        fn apply<TExpr>(&mut self, functor: &NumericCategory<T>, right: &TExpr)
+        where
+            TExpr: Expr<NumericCategory<T>>,
+        {
+            let mut vis = Self(T::default());
+            right.analyze(&mut vis);
+            match functor {
+                NumericCategory::Func(f) => self.0 = f(vis.0),
+                _ => {}
+            }
+        }
+    }
+
+    fn define_func<T, F>(func: F) -> NumericCategory<T>
+    where
+        F: Fn(T) -> T + 'static,
+    {
+        NumericCategory::Func(Box::new(func))
+    }
+
+    fn define_value<T>(v: T) -> Value<NumericCategory<T>> {
+        Value(NumericCategory::Value(v))
+    }
+
+    #[test]
+    fn i32_calc() {
+        let power_2 = define_func(|x| x * x);
+        let expr = define_value(2).apply(power_2).add(define_value(1));
+
+        let mut visitor = CalcVisitor(0);
+        expr.analyze(&mut visitor);
+
+        assert_eq!(5, visitor.0);
     }
 }
