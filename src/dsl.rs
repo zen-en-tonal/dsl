@@ -1,15 +1,17 @@
-pub trait Expr<T> {
-    fn analyze(&self, analyzer: &mut impl Analyzer<T>);
+use std::marker::PhantomData;
 
-    fn add<E>(self, other: E) -> Add<Self, E>
+pub trait Expr<TValue, TFunctor> {
+    fn analyze_with(&self, analyzer: &mut impl Analyzer<TValue, TFunctor>);
+
+    fn add<TExpr, F>(self, other: TExpr) -> Add<Self, TExpr>
     where
         Self: Sized,
-        E: Expr<T>,
+        TExpr: Expr<TValue, F>,
     {
         Add(self, other)
     }
 
-    fn apply(self, functor: T) -> Apply<T, Self>
+    fn apply(self, functor: TFunctor) -> Apply<TFunctor, Self>
     where
         Self: Sized,
     {
@@ -17,118 +19,126 @@ pub trait Expr<T> {
     }
 }
 
-pub trait Analyzer<TValue> {
+pub trait Analyzer<TValue, TFunctor> {
     fn value(&mut self, x: &TValue);
 
     fn add<TLeft, TRight>(&mut self, left: &TLeft, right: &TRight)
     where
-        TLeft: Expr<TValue>,
-        TRight: Expr<TValue>;
+        TLeft: Expr<TValue, TFunctor>,
+        TRight: Expr<TValue, TFunctor>;
 
-    fn apply<TExpr>(&mut self, functor: &TValue, right: &TExpr)
+    fn apply<TExpr>(&mut self, functor: &TFunctor, value: &TExpr)
     where
-        TExpr: Expr<TValue>;
+        TExpr: Expr<TValue, TFunctor>;
 }
 
-pub struct Value<T>(T);
+pub struct Value<T, F>(T, PhantomData<F>);
 
-impl<T> Expr<T> for Value<T> {
-    fn analyze(&self, visitor: &mut impl Analyzer<T>) {
+impl<T, F> Value<T, F> {
+    pub fn new(value: T) -> Value<T, F> {
+        Value(value, PhantomData)
+    }
+}
+
+impl<T, F> Expr<T, F> for Value<T, F> {
+    fn analyze_with(&self, visitor: &mut impl Analyzer<T, F>) {
         visitor.value(&self.0)
     }
 }
 
 pub struct Add<E1, E2>(E1, E2);
 
-impl<T, E1, E2> Expr<T> for Add<E1, E2>
+impl<T, F, E1, E2> Expr<T, F> for Add<E1, E2>
 where
-    E1: Expr<T>,
-    E2: Expr<T>,
+    E1: Expr<T, F>,
+    E2: Expr<T, F>,
 {
-    fn analyze(&self, visitor: &mut impl Analyzer<T>) {
+    fn analyze_with(&self, visitor: &mut impl Analyzer<T, F>) {
         visitor.add(&self.0, &self.1)
     }
 }
 
-pub struct Apply<TValue, TExpr>(TValue, TExpr);
+pub struct Apply<TFunctor, TExpr>(TFunctor, TExpr);
 
-impl<TValue, TExpr> Expr<TValue> for Apply<TValue, TExpr>
+impl<TValue, TFunctor, TExpr> Expr<TValue, TFunctor> for Apply<TFunctor, TExpr>
 where
-    TExpr: Expr<TValue>,
+    TExpr: Expr<TValue, TFunctor>,
 {
-    fn analyze(&self, analyzer: &mut impl Analyzer<TValue>) {
+    fn analyze_with(&self, analyzer: &mut impl Analyzer<TValue, TFunctor>) {
         analyzer.apply(&self.0, &self.1)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Add;
+    use std::collections::HashMap;
 
     use super::{Analyzer, Expr, Value};
 
-    enum NumericCategory<T> {
-        Value(T),
-        Func(Box<dyn Fn(T) -> T>),
+    enum NumericFunctor {
+        Pow(i32),
     }
 
-    struct CalcVisitor<T>(T);
+    struct Calcurator {
+        res: i32,
+        symbols: HashMap<String, i32>,
+    }
 
-    impl<T> Analyzer<NumericCategory<T>> for CalcVisitor<T>
-    where
-        T: Default + Copy + Add<Output = T>,
-    {
-        fn value(&mut self, x: &NumericCategory<T>) {
-            match x {
-                NumericCategory::Value(v) => self.0 = *v,
-                _ => {}
-            }
+    impl Analyzer<String, NumericFunctor> for Calcurator {
+        fn value(&mut self, x: &String) {
+            self.res = self.symbols[x];
         }
 
         fn add<TLeft, TRight>(&mut self, left: &TLeft, right: &TRight)
         where
-            TLeft: Expr<NumericCategory<T>>,
-            TRight: Expr<NumericCategory<T>>,
+            TLeft: Expr<String, NumericFunctor>,
+            TRight: Expr<String, NumericFunctor>,
         {
-            let mut left_vis = CalcVisitor(T::default());
-            left.analyze(&mut left_vis);
-            let mut right_vis = CalcVisitor(T::default());
-            right.analyze(&mut right_vis);
-            self.0 = left_vis.0 + right_vis.0;
+            let mut left_a = Self {
+                res: 0,
+                symbols: self.symbols.clone(),
+            };
+            let mut right_a = Self {
+                res: 0,
+                symbols: self.symbols.clone(),
+            };
+
+            left.analyze_with(&mut left_a);
+            right.analyze_with(&mut right_a);
+
+            self.res = left_a.res + right_a.res
         }
 
-        fn apply<TExpr>(&mut self, functor: &NumericCategory<T>, right: &TExpr)
+        fn apply<TExpr>(&mut self, functor: &NumericFunctor, value: &TExpr)
         where
-            TExpr: Expr<NumericCategory<T>>,
+            TExpr: Expr<String, NumericFunctor>,
         {
-            let mut vis = Self(T::default());
-            right.analyze(&mut vis);
+            let mut a = Self {
+                res: 0,
+                symbols: self.symbols.clone(),
+            };
+            value.analyze_with(&mut a);
             match functor {
-                NumericCategory::Func(f) => self.0 = f(vis.0),
-                _ => {}
+                NumericFunctor::Pow(x) => self.res = a.res.pow(*x as u32),
             }
         }
     }
 
-    fn define_func<T, F>(func: F) -> NumericCategory<T>
-    where
-        F: Fn(T) -> T + 'static,
-    {
-        NumericCategory::Func(Box::new(func))
-    }
-
-    fn define_value<T>(v: T) -> Value<NumericCategory<T>> {
-        Value(NumericCategory::Value(v))
-    }
-
     #[test]
     fn i32_calc() {
-        let power_2 = define_func(|x| x * x);
-        let expr = define_value(2).apply(power_2).add(define_value(1));
+        // (a + b ** 3 ) ** 2
+        let expr = Value::<String, NumericFunctor>::new("a".to_string())
+            .add(Value::new("b".to_string()).apply(NumericFunctor::Pow(3)))
+            .apply(NumericFunctor::Pow(2));
 
-        let mut visitor = CalcVisitor(0);
-        expr.analyze(&mut visitor);
+        let mut visitor = Calcurator {
+            res: 0,
+            symbols: vec![("a".to_string(), 2), ("b".to_string(), 2)]
+                .into_iter()
+                .collect(),
+        };
+        expr.analyze_with(&mut visitor);
 
-        assert_eq!(5, visitor.0);
+        assert_eq!(100, visitor.res);
     }
 }
