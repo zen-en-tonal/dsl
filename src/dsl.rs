@@ -15,6 +15,8 @@ pub trait Expr<TValue, TFunctor> {
 pub trait Analyzer<TValue, TFunctor> {
     fn value(&mut self, x: &TValue);
 
+    fn ident(&mut self) {}
+
     fn apply<TLeft, TRight>(&mut self, functor: &TFunctor, left: &TLeft, right: &TRight)
     where
         TLeft: Expr<TValue, TFunctor>,
@@ -30,8 +32,8 @@ impl<T, F> Ident<T, F> {
 }
 
 impl<T, F> Expr<T, F> for Ident<T, F> {
-    fn analyze_with(&self, _analyzer: &mut impl Analyzer<T, F>) {
-        // no-op
+    fn analyze_with(&self, analyzer: &mut impl Analyzer<T, F>) {
+        analyzer.ident()
     }
 }
 
