@@ -1,5 +1,5 @@
 use crate::dsl::*;
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, ops::Neg};
 
 pub fn def(symbol: &str) -> Value<Variable, Operations> {
     Value::new(Variable::Symbol(symbol.to_string()))
@@ -27,38 +27,38 @@ impl Display for Variable {
 pub enum Operations {
     Pow,
     Add,
+    Neg,
 }
 
 pub trait Algebra {
-    fn pow<TExpr>(self, x: TExpr) -> Apply<Operations, Self, TExpr>
-    where
-        Self: Sized,
-        TExpr: Expr<Variable, Operations>;
+    fn pow(self, x: impl Expr<Variable, Operations>) -> impl Expr<Variable, Operations>;
 
-    fn add<TExpr>(self, x: TExpr) -> Apply<Operations, Self, TExpr>
+    fn add(self, x: impl Expr<Variable, Operations>) -> impl Expr<Variable, Operations>;
+
+    fn neg(self) -> impl Expr<Variable, Operations>;
+
+    fn sub(self, x: impl Expr<Variable, Operations>) -> impl Expr<Variable, Operations>
     where
         Self: Sized,
-        TExpr: Expr<Variable, Operations>;
+    {
+        self.add(x.neg())
+    }
 }
 
 impl<T> Algebra for T
 where
     T: Expr<Variable, Operations>,
 {
-    fn pow<TExpr>(self, x: TExpr) -> Apply<Operations, Self, TExpr>
-    where
-        Self: Sized,
-        TExpr: Expr<Variable, Operations>,
-    {
+    fn pow(self, x: impl Expr<Variable, Operations>) -> impl Expr<Variable, Operations> {
         self.apply(Operations::Pow, x)
     }
 
-    fn add<TExpr>(self, x: TExpr) -> Apply<Operations, Self, TExpr>
-    where
-        Self: Sized,
-        TExpr: Expr<Variable, Operations>,
-    {
+    fn add(self, x: impl Expr<Variable, Operations>) -> impl Expr<Variable, Operations> {
         self.apply(Operations::Add, x)
+    }
+
+    fn neg(self) -> impl Expr<Variable, Operations> {
+        self.apply(Operations::Neg, Ident::new())
     }
 }
 
@@ -104,6 +104,7 @@ impl Analyzer<Variable, Operations> for Calcurator {
         match functor {
             Operations::Pow => self.res = left_a.res.pow(right_a.res as u32),
             Operations::Add => self.res = left_a.res + right_a.res,
+            Operations::Neg => self.res = left_a.res.neg(),
         }
     }
 }
@@ -140,6 +141,7 @@ impl Analyzer<Variable, Operations> for Displayer {
         match functor {
             Operations::Pow => self.0 = format!("({} ^ {})", left_a.0, right_a.0),
             Operations::Add => self.0 = format!("({} + {})", left_a.0, right_a.0),
+            Operations::Neg => self.0 = format!("(-{})", left_a.0),
         }
     }
 }
@@ -153,7 +155,8 @@ mod tests {
         let expr = def("a")
             .add(def("b").pow(cons(3)))
             .pow(cons(2))
-            .add(def("c").pow(def("x")));
+            .add(def("c").pow(def("x")))
+            .neg();
 
         let res = Calcurator::calc(
             vec![
@@ -166,10 +169,10 @@ mod tests {
             .collect(),
             &expr,
         );
-        assert_eq!(104, res);
+        assert_eq!(-104, res);
 
         assert_eq!(
-            "(((a + (b ^ 3)) ^ 2) + (c ^ x))".to_string(),
+            "(-(((a + (b ^ 3)) ^ 2) + (c ^ x)))".to_string(),
             Displayer::to_string(&expr)
         );
     }

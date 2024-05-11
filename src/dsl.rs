@@ -21,6 +21,20 @@ pub trait Analyzer<TValue, TFunctor> {
         TRight: Expr<TValue, TFunctor>;
 }
 
+pub struct Ident<T, F>(PhantomData<T>, PhantomData<F>);
+
+impl<T, F> Ident<T, F> {
+    pub fn new() -> Ident<T, F> {
+        Ident(PhantomData, PhantomData)
+    }
+}
+
+impl<T, F> Expr<T, F> for Ident<T, F> {
+    fn analyze_with(&self, _analyzer: &mut impl Analyzer<T, F>) {
+        // no-op
+    }
+}
+
 pub struct Value<T, F>(T, PhantomData<F>);
 
 impl<T, F> Value<T, F> {
