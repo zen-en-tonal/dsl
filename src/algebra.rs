@@ -2,15 +2,11 @@ use crate::dsl::*;
 use std::{collections::HashMap, fmt::Display};
 
 pub fn def(symbol: &str) -> Value<Variable, Operations> {
-    Value::new(var(symbol))
+    Value::new(Variable::Symbol(symbol.to_string()))
 }
 
-pub fn var(symbol: &str) -> Variable {
-    Variable::Symbol(symbol.to_string())
-}
-
-pub fn cons(x: i32) -> Variable {
-    Variable::Value(x)
+pub fn cons(x: i32) -> Value<Variable, Operations> {
+    Value::new(Variable::Value(x))
 }
 
 pub enum Variable {
@@ -29,24 +25,40 @@ impl Display for Variable {
 }
 
 pub enum Operations {
-    Pow(Variable),
+    Pow,
+    Add,
 }
 
 pub trait Algebra {
-    fn pow(self, x: Variable) -> Apply<Operations, Self>
+    fn pow<TExpr>(self, x: TExpr) -> Apply<Operations, Self, TExpr>
     where
-        Self: Sized;
+        Self: Sized,
+        TExpr: Expr<Variable, Operations>;
+
+    fn add<TExpr>(self, x: TExpr) -> Apply<Operations, Self, TExpr>
+    where
+        Self: Sized,
+        TExpr: Expr<Variable, Operations>;
 }
 
 impl<T> Algebra for T
 where
     T: Expr<Variable, Operations>,
 {
-    fn pow(self, x: Variable) -> Apply<Operations, Self>
+    fn pow<TExpr>(self, x: TExpr) -> Apply<Operations, Self, TExpr>
     where
         Self: Sized,
+        TExpr: Expr<Variable, Operations>,
     {
-        self.apply(Operations::Pow(x))
+        self.apply(Operations::Pow, x)
+    }
+
+    fn add<TExpr>(self, x: TExpr) -> Apply<Operations, Self, TExpr>
+    where
+        Self: Sized,
+        TExpr: Expr<Variable, Operations>,
+    {
+        self.apply(Operations::Add, x)
     }
 }
 
@@ -78,7 +90,7 @@ impl Analyzer<Variable, Operations> for Calcurator {
         };
     }
 
-    fn add<TLeft, TRight>(&mut self, left: &TLeft, right: &TRight)
+    fn apply<TLeft, TRight>(&mut self, functor: &Operations, left: &TLeft, right: &TRight)
     where
         TLeft: Expr<Variable, Operations>,
         TRight: Expr<Variable, Operations>,
@@ -89,20 +101,9 @@ impl Analyzer<Variable, Operations> for Calcurator {
         left.analyze_with(&mut left_a);
         right.analyze_with(&mut right_a);
 
-        self.res = left_a.res + right_a.res
-    }
-
-    fn apply<TExpr>(&mut self, functor: &Operations, value: &TExpr)
-    where
-        TExpr: Expr<Variable, Operations>,
-    {
-        let mut a = Self::new(self.symbols.clone());
-        value.analyze_with(&mut a);
         match functor {
-            Operations::Pow(x) => match x {
-                Variable::Value(v) => self.res = a.res.pow(*v as u32),
-                Variable::Symbol(s) => self.res = a.res.pow(self.symbols[s] as u32),
-            },
+            Operations::Pow => self.res = left_a.res.pow(right_a.res as u32),
+            Operations::Add => self.res = left_a.res + right_a.res,
         }
     }
 }
@@ -125,7 +126,7 @@ impl Analyzer<Variable, Operations> for Displayer {
         self.0 = format!("{}", x)
     }
 
-    fn add<TLeft, TRight>(&mut self, left: &TLeft, right: &TRight)
+    fn apply<TLeft, TRight>(&mut self, functor: &Operations, left: &TLeft, right: &TRight)
     where
         TLeft: Expr<Variable, Operations>,
         TRight: Expr<Variable, Operations>,
@@ -136,20 +137,9 @@ impl Analyzer<Variable, Operations> for Displayer {
         left.analyze_with(&mut left_a);
         right.analyze_with(&mut right_a);
 
-        self.0 = format!("({} + {})", left_a.0, right_a.0)
-    }
-
-    fn apply<TExpr>(&mut self, functor: &Operations, value: &TExpr)
-    where
-        TExpr: Expr<Variable, Operations>,
-    {
-        let mut a = Self(String::new());
-        value.analyze_with(&mut a);
         match functor {
-            Operations::Pow(x) => match x {
-                Variable::Value(x) => self.0 = format!("({} ^ {})", a.0, *x),
-                Variable::Symbol(x) => self.0 = format!("({} ^ {})", a.0, x),
-            },
+            Operations::Pow => self.0 = format!("({} ^ {})", left_a.0, right_a.0),
+            Operations::Add => self.0 = format!("({} + {})", left_a.0, right_a.0),
         }
     }
 }
@@ -163,7 +153,7 @@ mod tests {
         let expr = def("a")
             .add(def("b").pow(cons(3)))
             .pow(cons(2))
-            .add(def("c").pow(var("x")));
+            .add(def("c").pow(def("x")));
 
         let res = Calcurator::calc(
             vec![

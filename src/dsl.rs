@@ -3,33 +3,22 @@ use std::marker::PhantomData;
 pub trait Expr<TValue, TFunctor> {
     fn analyze_with(&self, analyzer: &mut impl Analyzer<TValue, TFunctor>);
 
-    fn add<TExpr, F>(self, other: TExpr) -> Add<Self, TExpr>
+    fn apply<TExpr>(self, functor: TFunctor, other: TExpr) -> Apply<TFunctor, Self, TExpr>
     where
         Self: Sized,
-        TExpr: Expr<TValue, F>,
+        TExpr: Expr<TValue, TFunctor>,
     {
-        Add(self, other)
-    }
-
-    fn apply(self, functor: TFunctor) -> Apply<TFunctor, Self>
-    where
-        Self: Sized,
-    {
-        Apply(functor, self)
+        Apply(functor, self, other)
     }
 }
 
 pub trait Analyzer<TValue, TFunctor> {
     fn value(&mut self, x: &TValue);
 
-    fn add<TLeft, TRight>(&mut self, left: &TLeft, right: &TRight)
+    fn apply<TLeft, TRight>(&mut self, functor: &TFunctor, left: &TLeft, right: &TRight)
     where
         TLeft: Expr<TValue, TFunctor>,
         TRight: Expr<TValue, TFunctor>;
-
-    fn apply<TExpr>(&mut self, functor: &TFunctor, value: &TExpr)
-    where
-        TExpr: Expr<TValue, TFunctor>;
 }
 
 pub struct Value<T, F>(T, PhantomData<F>);
@@ -46,25 +35,14 @@ impl<T, F> Expr<T, F> for Value<T, F> {
     }
 }
 
-pub struct Add<E1, E2>(E1, E2);
+pub struct Apply<TFunctor, TLeft, TRight>(TFunctor, TLeft, TRight);
 
-impl<T, F, E1, E2> Expr<T, F> for Add<E1, E2>
+impl<TValue, TFunctor, TLeft, TRight> Expr<TValue, TFunctor> for Apply<TFunctor, TLeft, TRight>
 where
-    E1: Expr<T, F>,
-    E2: Expr<T, F>,
-{
-    fn analyze_with(&self, visitor: &mut impl Analyzer<T, F>) {
-        visitor.add(&self.0, &self.1)
-    }
-}
-
-pub struct Apply<TFunctor, TExpr>(TFunctor, TExpr);
-
-impl<TValue, TFunctor, TExpr> Expr<TValue, TFunctor> for Apply<TFunctor, TExpr>
-where
-    TExpr: Expr<TValue, TFunctor>,
+    TLeft: Expr<TValue, TFunctor>,
+    TRight: Expr<TValue, TFunctor>,
 {
     fn analyze_with(&self, analyzer: &mut impl Analyzer<TValue, TFunctor>) {
-        analyzer.apply(&self.0, &self.1)
+        analyzer.apply(&self.0, &self.1, &self.2)
     }
 }
