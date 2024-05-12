@@ -1,6 +1,5 @@
-use std::marker::PhantomData;
-
 use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
 
 pub trait Expr<TValue, TFunctor>: Serialize + for<'a> Deserialize<'a> {
     fn analyze_with(&self, analyzer: &mut impl Analyzer<TValue, TFunctor>);

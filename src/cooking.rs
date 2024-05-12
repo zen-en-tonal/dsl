@@ -1,11 +1,10 @@
 mod instraction;
 mod required;
 
+use self::instraction::Nodes;
 use crate::dsl::*;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, ops::Mul};
-
-use self::instraction::Nodes;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recipe<E, T> {
@@ -43,8 +42,17 @@ pub enum Amount {
     Pcs(f32),
     Tsp(f32),
     Gram(f32),
-    MilliIllter(f32),
+    MilliLitter(f32),
     Pinch,
+}
+
+impl Amount {
+    pub fn of<T>(self, x: T) -> impl Expr<Ingredient<T>, Process>
+    where
+        T: Serialize + for<'de> Deserialize<'de>,
+    {
+        prepare(x, self)
+    }
 }
 
 impl Mul<f32> for Amount {
@@ -55,8 +63,8 @@ impl Mul<f32> for Amount {
             Amount::Pcs(x) => Amount::Pcs(x * rhs),
             Amount::Tsp(x) => Amount::Tsp(x * rhs),
             Amount::Gram(x) => Amount::Gram(x * rhs),
-            Amount::MilliIllter(x) => Amount::MilliIllter(x * rhs),
-            Amount::Pinch => todo!(),
+            Amount::MilliLitter(x) => Amount::MilliLitter(x * rhs),
+            Amount::Pinch => Amount::Pinch,
         }
     }
 }
@@ -67,7 +75,7 @@ impl Display for Amount {
             Amount::Pcs(x) => format!("{} [pcs]", x),
             Amount::Tsp(x) => format!("{} [tsp]", x),
             Amount::Gram(x) => format!("{} [g]", x),
-            Amount::MilliIllter(x) => format!("{} [ml]", x),
+            Amount::MilliLitter(x) => format!("{} [ml]", x),
             Amount::Pinch => format!("pinch"),
         };
         write!(f, "{}", lit)
@@ -97,7 +105,7 @@ pub enum Process {
     Boils(f32),
     Stew(f32),
     Waits(f32),
-    Add,
+    Join,
 }
 
 pub fn prepare<T>(what: T, amount: Amount) -> impl Expr<Ingredient<T>, Process>
@@ -132,7 +140,7 @@ where
     }
 
     fn joins(self, other: impl Expr<Ingredient<T>, Process>) -> impl Expr<Ingredient<T>, Process> {
-        self.apply(Process::Add, other)
+        self.apply(Process::Join, other)
     }
 
     fn stew(self, until: f32) -> impl Expr<Ingredient<T>, Process> {
@@ -179,7 +187,7 @@ where
                 self.stew(*until);
             }
             Process::Waits(_) => todo!(),
-            Process::Add => {
+            Process::Join => {
                 let mut l = self.split();
                 left.analyze_with(&mut l);
 
