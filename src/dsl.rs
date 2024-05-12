@@ -19,10 +19,12 @@ pub trait Analyzer<TValue, TFunctor> {
 
     fn ident(&mut self) {}
 
-    fn apply<TLeft, TRight>(&mut self, functor: &TFunctor, left: &TLeft, right: &TRight)
-    where
-        TLeft: Expr<TValue, TFunctor>,
-        TRight: Expr<TValue, TFunctor>;
+    fn apply(
+        &mut self,
+        functor: &TFunctor,
+        left: &impl Expr<TValue, TFunctor>,
+        right: &impl Expr<TValue, TFunctor>,
+    );
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
-
 use crate::dsl::*;
+use serde::{Deserialize, Serialize};
 use std::{fmt::Display, ops::Mul};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,7 +20,7 @@ where
         }
     }
 
-    pub fn instraction(&self) -> Vec<String> {
+    pub fn instraction(&self) -> String {
         let mut a = Instraction::new();
         self.inner.analyze_with(&mut a);
         a.0
@@ -136,95 +135,129 @@ where
     }
 }
 
-struct Instraction(Vec<String>);
-
-impl Instraction {
-    fn new() -> Instraction {
-        Instraction(vec![])
-    }
+pub trait CookingAnalyzer<T> {
+    fn prepare(&mut self, x: &Ingredient<T>);
+    fn cut(&mut self, shape: &str);
+    fn stake(&mut self, until: f32);
+    fn stew(&mut self, until: f32);
+    fn add(&mut self, left: Self, right: Self);
+    fn split(&self) -> Self;
 }
 
-impl<T> Analyzer<Ingredient<T>, Process> for Instraction
+impl<T, V> Analyzer<Ingredient<V>, Process> for T
 where
-    T: Display,
+    T: CookingAnalyzer<V>,
 {
-    fn value(&mut self, x: &Ingredient<T>) {
-        self.0.push(format!("prepare {}", x))
+    fn value(&mut self, x: &Ingredient<V>) {
+        self.prepare(x)
     }
 
-    fn apply<TLeft, TRight>(&mut self, functor: &Process, left: &TLeft, right: &TRight)
-    where
-        TLeft: Expr<Ingredient<T>, Process>,
-        TRight: Expr<Ingredient<T>, Process>,
-    {
-        let mut left_a = Self::new();
-        let mut right_a = Self::new();
-
-        left.analyze_with(&mut left_a);
-        right.analyze_with(&mut right_a);
-
+    fn apply(
+        &mut self,
+        functor: &Process,
+        left: &impl Expr<Ingredient<V>, Process>,
+        right: &impl Expr<Ingredient<V>, Process>,
+    ) {
         match functor {
-            Process::Cuts(shapes) => {
-                self.0.append(&mut left_a.0);
-                self.0.push(format!("cuts it like {}", shapes));
+            Process::Cuts(shape) => {
+                left.analyze_with(self);
+                self.cut(&shape);
             }
-            Process::Stakes(fo) => {
-                self.0.append(&mut left_a.0);
-                self.0.push(format!("stakes it for {} min", fo));
+            Process::Stakes(until) => {
+                left.analyze_with(self);
+                self.stake(*until);
             }
             Process::Fries(_) => todo!(),
             Process::Boils(_) => todo!(),
-            Process::Waits(_) => todo!(),
-            Process::Stew(f) => {
-                self.0.append(&mut left_a.0);
-                self.0.push(format!("stews it for {} min", f));
+            Process::Stew(until) => {
+                left.analyze_with(self);
+                self.stew(*until);
             }
+            Process::Waits(_) => todo!(),
             Process::Add => {
-                self.0.append(
-                    &mut left_a
-                        .0
-                        .into_iter()
-                        .map(|x| format!("| {}", x))
-                        .collect::<Vec<String>>(),
-                );
-                self.0.append(
-                    &mut right_a
-                        .0
-                        .into_iter()
-                        .map(|x| format!("| {}", x))
-                        .collect::<Vec<String>>(),
-                );
+                let mut l = self.split();
+                left.analyze_with(&mut l);
+
+                let mut r = self.split();
+                right.analyze_with(&mut r);
+
+                self.add(l, r);
             }
         }
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct Instraction(String, i32);
+
+impl Instraction {
+    fn new() -> Instraction {
+        Instraction(String::new(), 0)
+    }
+}
+
+impl<T> CookingAnalyzer<T> for Instraction
+where
+    T: Display,
+{
+    fn prepare(&mut self, x: &Ingredient<T>) {
+        println!("{}: prepare {}", self.1, x)
+    }
+
+    fn cut(&mut self, shape: &str) {
+        println!("{}: cut like {}", self.1, shape)
+    }
+
+    fn stake(&mut self, until: f32) {
+        println!("{}: stake until {}", self.1, until)
+    }
+
+    fn stew(&mut self, until: f32) {
+        println!("{}: stew until {}", self.1, until)
+    }
+
+    fn add(&mut self, left: Self, right: Self) {
+        println!("{}: add {}, {}", self.1, left.1, right.1)
+    }
+
+    fn split(&self) -> Self {
+        Self(String::new(), self.1 + 1)
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Required<T>(Vec<Ingredient<T>>, f32);
 
-impl<T> Analyzer<Ingredient<T>, Process> for Required<T>
+impl<T> Default for Required<T> {
+    fn default() -> Self {
+        Self(Default::default(), Default::default())
+    }
+}
+
+impl<T> CookingAnalyzer<T> for Required<T>
 where
     T: Clone,
 {
-    fn value(&mut self, x: &Ingredient<T>) {
+    fn prepare(&mut self, x: &Ingredient<T>) {
         self.0.push(Ingredient {
             amount: x.amount * self.1,
             kind: x.kind.to_owned(),
         })
     }
 
-    fn apply<TLeft, TRight>(&mut self, _functor: &Process, left: &TLeft, right: &TRight)
-    where
-        TLeft: Expr<Ingredient<T>, Process>,
-        TRight: Expr<Ingredient<T>, Process>,
-    {
-        let mut left_a = Self(vec![], self.1);
-        let mut right_a = Self(vec![], self.1);
+    fn cut(&mut self, _shape: &str) {}
 
-        left.analyze_with(&mut left_a);
-        right.analyze_with(&mut right_a);
+    fn stake(&mut self, _until: f32) {}
 
-        self.0.append(&mut left_a.0);
-        self.0.append(&mut right_a.0);
+    fn stew(&mut self, _until: f32) {}
+
+    fn add(&mut self, mut left: Self, mut right: Self) {
+        self.0.append(left.0.as_mut());
+        self.0.append(right.0.as_mut());
+    }
+
+    fn split(&self) -> Self {
+        Self(vec![], self.1)
     }
 }
 
@@ -248,13 +281,10 @@ mod tests {
             "curry".to_string(),
         );
 
-        println!("{:#?}", recipe.instraction());
+        println!("{}", recipe.instraction());
 
         for i in recipe.needed(2.) {
             println!("{}", i);
         }
-
-        let json = serde_json::to_string_pretty(&recipe).unwrap();
-        println!("{}", json)
     }
 }

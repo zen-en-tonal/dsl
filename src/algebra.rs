@@ -94,11 +94,12 @@ impl Analyzer<Variable, Operations> for Calcurator {
         };
     }
 
-    fn apply<TLeft, TRight>(&mut self, functor: &Operations, left: &TLeft, right: &TRight)
-    where
-        TLeft: Expr<Variable, Operations>,
-        TRight: Expr<Variable, Operations>,
-    {
+    fn apply(
+        &mut self,
+        functor: &Operations,
+        left: &impl Expr<Variable, Operations>,
+        right: &impl Expr<Variable, Operations>,
+    ) {
         let mut left_a = Self::new(self.symbols.clone());
         let mut right_a = Self::new(self.symbols.clone());
 
@@ -131,11 +132,12 @@ impl Analyzer<Variable, Operations> for Displayer {
         self.0 = format!("{}", x)
     }
 
-    fn apply<TLeft, TRight>(&mut self, functor: &Operations, left: &TLeft, right: &TRight)
-    where
-        TLeft: Expr<Variable, Operations>,
-        TRight: Expr<Variable, Operations>,
-    {
+    fn apply(
+        &mut self,
+        functor: &Operations,
+        left: &impl Expr<Variable, Operations>,
+        right: &impl Expr<Variable, Operations>,
+    ) {
         let mut left_a = Self(String::new());
         let mut right_a = Self(String::new());
 
