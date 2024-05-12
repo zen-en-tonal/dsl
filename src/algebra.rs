@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::dsl::*;
 use std::{collections::HashMap, fmt::Display, ops::Neg};
 
@@ -9,6 +11,7 @@ pub fn cons(x: i32) -> Value<Variable, Operations> {
     Value::new(Variable::Value(x))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Variable {
     Value(i32),
     Symbol(String),
@@ -24,6 +27,7 @@ impl Display for Variable {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Operations {
     Pow,
     Add,
@@ -47,7 +51,7 @@ pub trait Algebra {
 
 impl<T> Algebra for T
 where
-    T: Expr<Variable, Operations>,
+    T: Expr<Variable, Operations> + Serialize + for<'de> Deserialize<'de>,
 {
     fn pow(self, x: impl Expr<Variable, Operations>) -> impl Expr<Variable, Operations> {
         self.apply(Operations::Pow, x)
