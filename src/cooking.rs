@@ -1,6 +1,11 @@
+mod instraction;
+mod required;
+
 use crate::dsl::*;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, ops::Mul};
+
+use self::instraction::Nodes;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Recipe<E, T> {
@@ -20,16 +25,16 @@ where
         }
     }
 
-    pub fn instraction(&self) -> String {
-        let mut a = Instraction::new();
+    pub fn instraction(&self) -> Nodes {
+        let mut a = instraction::Instraction::new();
         self.inner.analyze_with(&mut a);
-        a.0
+        a.into_groups()
     }
 
-    pub fn needed(&self, fact: f32) -> Vec<Ingredient<T>> {
-        let mut a = Required(vec![], fact);
+    pub fn needed(&self) -> impl Iterator<Item = Ingredient<T>> {
+        let mut a = required::Required::new();
         self.inner.analyze_with(&mut a);
-        a.0
+        a.into_iter()
     }
 }
 
@@ -80,7 +85,7 @@ where
     T: Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} of {}s", self.amount, self.kind)
+        write!(f, "{} of {}(s)", self.amount, self.kind)
     }
 }
 
@@ -107,7 +112,7 @@ pub trait Cooking<T> {
     fn stakes(self, until: f32) -> impl Expr<Ingredient<T>, Process>;
     fn boils(self, until: f32) -> impl Expr<Ingredient<T>, Process>;
     fn stew(self, until: f32) -> impl Expr<Ingredient<T>, Process>;
-    fn adds(self, other: impl Expr<Ingredient<T>, Process>) -> impl Expr<Ingredient<T>, Process>;
+    fn joins(self, other: impl Expr<Ingredient<T>, Process>) -> impl Expr<Ingredient<T>, Process>;
 }
 
 impl<F, T> Cooking<T> for F
@@ -126,7 +131,7 @@ where
         self.apply(Process::Boils(until), Ident::new())
     }
 
-    fn adds(self, other: impl Expr<Ingredient<T>, Process>) -> impl Expr<Ingredient<T>, Process> {
+    fn joins(self, other: impl Expr<Ingredient<T>, Process>) -> impl Expr<Ingredient<T>, Process> {
         self.apply(Process::Add, other)
     }
 
@@ -140,7 +145,7 @@ pub trait CookingAnalyzer<T> {
     fn cut(&mut self, shape: &str);
     fn stake(&mut self, until: f32);
     fn stew(&mut self, until: f32);
-    fn add(&mut self, left: Self, right: Self);
+    fn join(&mut self, left: Self, right: Self);
     fn split(&self) -> Self;
 }
 
@@ -181,110 +186,8 @@ where
                 let mut r = self.split();
                 right.analyze_with(&mut r);
 
-                self.add(l, r);
+                self.join(l, r);
             }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct Instraction(String, i32);
-
-impl Instraction {
-    fn new() -> Instraction {
-        Instraction(String::new(), 0)
-    }
-}
-
-impl<T> CookingAnalyzer<T> for Instraction
-where
-    T: Display,
-{
-    fn prepare(&mut self, x: &Ingredient<T>) {
-        println!("{}: prepare {}", self.1, x)
-    }
-
-    fn cut(&mut self, shape: &str) {
-        println!("{}: cut like {}", self.1, shape)
-    }
-
-    fn stake(&mut self, until: f32) {
-        println!("{}: stake until {}", self.1, until)
-    }
-
-    fn stew(&mut self, until: f32) {
-        println!("{}: stew until {}", self.1, until)
-    }
-
-    fn add(&mut self, left: Self, right: Self) {
-        println!("{}: add {}, {}", self.1, left.1, right.1)
-    }
-
-    fn split(&self) -> Self {
-        Self(String::new(), self.1 + 1)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Required<T>(Vec<Ingredient<T>>, f32);
-
-impl<T> Default for Required<T> {
-    fn default() -> Self {
-        Self(Default::default(), Default::default())
-    }
-}
-
-impl<T> CookingAnalyzer<T> for Required<T>
-where
-    T: Clone,
-{
-    fn prepare(&mut self, x: &Ingredient<T>) {
-        self.0.push(Ingredient {
-            amount: x.amount * self.1,
-            kind: x.kind.to_owned(),
-        })
-    }
-
-    fn cut(&mut self, _shape: &str) {}
-
-    fn stake(&mut self, _until: f32) {}
-
-    fn stew(&mut self, _until: f32) {}
-
-    fn add(&mut self, mut left: Self, mut right: Self) {
-        self.0.append(left.0.as_mut());
-        self.0.append(right.0.as_mut());
-    }
-
-    fn split(&self) -> Self {
-        Self(vec![], self.1)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn make_curry() {
-        let recipe = Recipe::new(
-            prepare("onion".to_string(), Amount::Pcs(1.))
-                .cuts("dice")
-                .stakes(3.)
-                .adds(prepare("currot".to_string(), Amount::Pcs(1.)).cuts("block"))
-                .adds(prepare("potato".to_string(), Amount::Pcs(1.)).cuts("block"))
-                .stakes(3.)
-                .adds(prepare("water".to_string(), Amount::MilliIllter(1000.)))
-                .stew(15.)
-                .adds(prepare("loux".to_string(), Amount::Pcs(1.)))
-                .stew(3.),
-            "curry".to_string(),
-        );
-
-        println!("{}", recipe.instraction());
-
-        for i in recipe.needed(2.) {
-            println!("{}", i);
         }
     }
 }
