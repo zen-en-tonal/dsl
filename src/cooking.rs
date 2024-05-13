@@ -1,12 +1,10 @@
-mod instraction;
 mod required;
+mod tree_parser;
 
-use self::instraction::Nodes;
 use crate::dsl::*;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, ops::Mul};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Recipe<E, T> {
     inner: E,
     to_make: T,
@@ -14,20 +12,18 @@ pub struct Recipe<E, T> {
 
 impl<E, T> Recipe<E, T>
 where
-    E: Expr<Ingredient<T>, Process> + Serialize,
-    T: Display + Clone,
+    E: Expr<Ingredient<T>, Operations> + Serialize,
+    T: Clone,
 {
-    pub fn new(expr: E, to_make: T) -> Self {
+    pub fn new(expr: impl Fn() -> E, to_make: T) -> Self {
         Recipe {
-            inner: expr,
+            inner: expr(),
             to_make,
         }
     }
 
-    pub fn instraction(&self) -> Nodes {
-        let mut a = instraction::Instraction::new();
-        self.inner.analyze_with(&mut a);
-        a.into_groups()
+    pub fn parse(&self) -> tree_parser::Tree<Ingredient<T>> {
+        tree_parser::parse(&self.inner)
     }
 
     pub fn needed(&self) -> impl Iterator<Item = Ingredient<T>> {
@@ -35,9 +31,13 @@ where
         self.inner.analyze_with(&mut a);
         a.into_iter()
     }
+
+    pub fn into_expr(self) -> E {
+        self.inner
+    }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum Amount {
     Pcs(f32),
     Tsp(f32),
@@ -47,7 +47,7 @@ pub enum Amount {
 }
 
 impl Amount {
-    pub fn of<T>(self, x: T) -> impl Expr<Ingredient<T>, Process>
+    pub fn of<T>(self, x: T) -> impl Expr<Ingredient<T>, Operations>
     where
         T: Serialize + for<'de> Deserialize<'de>,
     {
@@ -55,60 +55,29 @@ impl Amount {
     }
 }
 
-impl Mul<f32> for Amount {
-    type Output = Amount;
-
-    fn mul(self, rhs: f32) -> Self::Output {
-        match self {
-            Amount::Pcs(x) => Amount::Pcs(x * rhs),
-            Amount::Tsp(x) => Amount::Tsp(x * rhs),
-            Amount::Gram(x) => Amount::Gram(x * rhs),
-            Amount::MilliLitter(x) => Amount::MilliLitter(x * rhs),
-            Amount::Pinch => Amount::Pinch,
-        }
-    }
-}
-
-impl Display for Amount {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let lit = match self {
-            Amount::Pcs(x) => format!("{} [pcs]", x),
-            Amount::Tsp(x) => format!("{} [tsp]", x),
-            Amount::Gram(x) => format!("{} [g]", x),
-            Amount::MilliLitter(x) => format!("{} [ml]", x),
-            Amount::Pinch => format!("pinch"),
-        };
-        write!(f, "{}", lit)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Ingredient<T> {
     kind: T,
     amount: Amount,
 }
 
-impl<T> Display for Ingredient<T>
-where
-    T: Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} of {}(s)", self.amount, self.kind)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Process {
-    Cuts(String),
-    Stakes(f32),
-    Fries(f32),
-    Boils(f32),
-    Stew(f32),
-    Waits(f32),
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Operations {
+    Processes(Processes),
     Join,
 }
 
-pub fn prepare<T>(what: T, amount: Amount) -> impl Expr<Ingredient<T>, Process>
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Processes {
+    Cuts { shape: String },
+    Stakes { until: f32 },
+    Fries { until: f32 },
+    Boils { until: f32 },
+    Stew { until: f32 },
+    Waits { until: f32 },
+}
+
+pub fn prepare<T>(what: T, amount: Amount) -> impl Expr<Ingredient<T>, Operations>
 where
     T: Serialize + for<'de> Deserialize<'de>,
 {
@@ -116,48 +85,94 @@ where
 }
 
 pub trait Cooking<T> {
-    fn cuts(self, shape: &str) -> impl Expr<Ingredient<T>, Process>;
-    fn stakes(self, until: f32) -> impl Expr<Ingredient<T>, Process>;
-    fn boils(self, until: f32) -> impl Expr<Ingredient<T>, Process>;
-    fn stew(self, until: f32) -> impl Expr<Ingredient<T>, Process>;
-    fn joins(self, other: impl Expr<Ingredient<T>, Process>) -> impl Expr<Ingredient<T>, Process>;
+    fn apply_process(self, p: Processes) -> impl Expr<Ingredient<T>, Operations>;
+
+    fn joins(
+        self,
+        other: impl Expr<Ingredient<T>, Operations>,
+    ) -> impl Expr<Ingredient<T>, Operations>;
+}
+
+pub trait CookingExpr<T>: Cooking<T> {
+    fn cuts(self, shape: &str) -> impl Expr<Ingredient<T>, Operations>
+    where
+        Self: Sized,
+    {
+        self.apply_process(Processes::Cuts {
+            shape: shape.to_string(),
+        })
+    }
+
+    fn stakes(self, until: f32) -> impl Expr<Ingredient<T>, Operations>
+    where
+        Self: Sized,
+    {
+        self.apply_process(Processes::Stakes { until })
+    }
+
+    fn stakes_with(
+        self,
+        other: impl Expr<Ingredient<T>, Operations>,
+        until: f32,
+    ) -> impl Expr<Ingredient<T>, Operations>
+    where
+        Self: Sized,
+    {
+        self.joins(other).stakes(until)
+    }
+
+    fn boils(self, until: f32) -> impl Expr<Ingredient<T>, Operations>
+    where
+        Self: Sized,
+    {
+        self.apply_process(Processes::Boils { until })
+    }
+
+    fn stew(self, until: f32) -> impl Expr<Ingredient<T>, Operations>
+    where
+        Self: Sized,
+    {
+        self.apply_process(Processes::Stew { until })
+    }
+
+    fn stew_with(
+        self,
+        other: impl Expr<Ingredient<T>, Operations>,
+        until: f32,
+    ) -> impl Expr<Ingredient<T>, Operations>
+    where
+        Self: Sized,
+    {
+        self.joins(other).stew(until)
+    }
 }
 
 impl<F, T> Cooking<T> for F
 where
-    F: Expr<Ingredient<T>, Process>,
+    F: Expr<Ingredient<T>, Operations>,
 {
-    fn cuts(self, shape: &str) -> impl Expr<Ingredient<T>, Process> {
-        self.apply(Process::Cuts(shape.to_string()), Ident::new())
+    fn joins(
+        self,
+        other: impl Expr<Ingredient<T>, Operations>,
+    ) -> impl Expr<Ingredient<T>, Operations> {
+        self.apply(Operations::Join, other)
     }
 
-    fn stakes(self, until: f32) -> impl Expr<Ingredient<T>, Process> {
-        self.apply(Process::Stakes(until), Ident::new())
-    }
-
-    fn boils(self, until: f32) -> impl Expr<Ingredient<T>, Process> {
-        self.apply(Process::Boils(until), Ident::new())
-    }
-
-    fn joins(self, other: impl Expr<Ingredient<T>, Process>) -> impl Expr<Ingredient<T>, Process> {
-        self.apply(Process::Join, other)
-    }
-
-    fn stew(self, until: f32) -> impl Expr<Ingredient<T>, Process> {
-        self.apply(Process::Stew(until), Ident::new())
+    fn apply_process(self, p: Processes) -> impl Expr<Ingredient<T>, Operations> {
+        self.apply(Operations::Processes(p), Ident::new())
     }
 }
 
+impl<F, T> CookingExpr<T> for F where F: Cooking<T> {}
+
 pub trait CookingAnalyzer<T> {
     fn prepare(&mut self, x: &Ingredient<T>);
-    fn cut(&mut self, shape: &str);
-    fn stake(&mut self, until: f32);
-    fn stew(&mut self, until: f32);
+    fn process(&mut self, p: &Processes);
     fn join(&mut self, left: Self, right: Self);
     fn split(&self) -> Self;
 }
 
-impl<T, V> Analyzer<Ingredient<V>, Process> for T
+impl<T, V> Analyzer<Ingredient<V>, Operations> for T
 where
     T: CookingAnalyzer<V>,
 {
@@ -167,34 +182,20 @@ where
 
     fn apply(
         &mut self,
-        functor: &Process,
-        left: &impl Expr<Ingredient<V>, Process>,
-        right: &impl Expr<Ingredient<V>, Process>,
+        functor: &Operations,
+        left: &impl Expr<Ingredient<V>, Operations>,
+        right: &impl Expr<Ingredient<V>, Operations>,
     ) {
         match functor {
-            Process::Cuts(shape) => {
-                left.analyze_with(self);
-                self.cut(&shape);
-            }
-            Process::Stakes(until) => {
-                left.analyze_with(self);
-                self.stake(*until);
-            }
-            Process::Fries(_) => todo!(),
-            Process::Boils(_) => todo!(),
-            Process::Stew(until) => {
-                left.analyze_with(self);
-                self.stew(*until);
-            }
-            Process::Waits(_) => todo!(),
-            Process::Join => {
-                let mut l = self.split();
+            Operations::Join => {
+                let (mut l, mut r) = (self.split(), self.split());
                 left.analyze_with(&mut l);
-
-                let mut r = self.split();
                 right.analyze_with(&mut r);
-
                 self.join(l, r);
+            }
+            Operations::Processes(x) => {
+                left.analyze_with(self);
+                self.process(x);
             }
         }
     }

@@ -31,12 +31,6 @@ where
         })
     }
 
-    fn cut(&mut self, _shape: &str) {}
-
-    fn stake(&mut self, _until: f32) {}
-
-    fn stew(&mut self, _until: f32) {}
-
     fn join(&mut self, mut left: Self, mut right: Self) {
         self.0.append(left.0.as_mut());
         self.0.append(right.0.as_mut());
@@ -45,4 +39,6 @@ where
     fn split(&self) -> Self {
         Self(vec![])
     }
+
+    fn process(&mut self, _p: &Processes) {}
 }
